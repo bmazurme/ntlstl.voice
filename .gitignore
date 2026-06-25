@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+backend/models/*.bin
+backend/tmp/*
+!backend/tmp/.gitkeep
