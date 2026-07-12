@@ -1,0 +1,66 @@
+menu "P4 Voice Client Configuration"
+
+    config P4_WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID (network name) to connect to. The radio runs on the
+            on-board ESP32-C6 (WiFi 6) via esp-hosted.
+
+    config P4_WIFI_PASSWORD
+        string "WiFi Password"
+        default "mypassword"
+        help
+            WiFi password (WPA or WPA2).
+
+    config P4_BACKEND_URL
+        string "Backend /api/transcribe URL"
+        default "http://192.168.1.100/api/transcribe"
+        help
+            Full URL of the backend's transcription endpoint. The firmware
+            strips the "/api/transcribe" suffix to get the backend's base
+            URL, then also calls <base>/api/llm-command and
+            <base>/api/ha-execute on it to run the full voice pipeline (all
+            three must be reachable at the same host/port). When the
+            backend runs via docker-compose it is reached through the
+            frontend's nginx on port 80 (proxied to backend:3001), so use
+            http://<host-ip>/api/transcribe (no :3001). Point it at your
+            Docker host's LAN IP.
+
+    config P4_RECORD_SECONDS
+        int "Recording duration after wake word (seconds)"
+        range 1 10
+        default 4
+        help
+            How long to record and send audio after the wake word is detected.
+
+    config P4_I2C_SDA_GPIO
+        int "ES8311 I2C SDA GPIO"
+        default 7
+
+    config P4_I2C_SCL_GPIO
+        int "ES8311 I2C SCL GPIO"
+        default 8
+
+    config P4_I2S_MCLK_GPIO
+        int "I2S MCLK GPIO"
+        default 13
+
+    config P4_I2S_BCLK_GPIO
+        int "I2S BCLK (SCLK) GPIO"
+        default 12
+
+    config P4_I2S_WS_GPIO
+        int "I2S WS (LRCLK) GPIO"
+        default 10
+
+    config P4_I2S_DIN_GPIO
+        int "I2S DIN (mic data from ES8311 ASDOUT) GPIO"
+        default 11
+
+    config P4_MIC_GAIN_DB
+        int "Microphone input gain (dB)"
+        range 0 50
+        default 30
+
+endmenu

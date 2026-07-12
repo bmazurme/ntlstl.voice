@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      WHISPER_LANGUAGE: auto
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: gemma3:1b
+      # mDNS (.local) не резолвится внутри контейнера — укажи реальный IP Home Assistant
+      HA_URL: http://192.168.50.135:8123
+      HA_TOKEN: ${HA_TOKEN}
+    volumes:
+      - ./backend/models:/app/models:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
