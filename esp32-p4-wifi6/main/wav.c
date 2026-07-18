@@ -38,3 +38,54 @@ void wav_write_header(uint8_t header[WAV_HEADER_SIZE], uint32_t pcm_bytes,
     memcpy(header + 36, "data", 4);
     put_le32(header + 40, pcm_bytes);
 }
+
+static uint32_t get_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint16_t get_le16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | (p[1] << 8));
+}
+
+bool wav_parse(const uint8_t *buf, size_t len, const int16_t **out_pcm,
+               size_t *out_num_samples, uint32_t *out_sample_rate)
+{
+    if (len < 12 || memcmp(buf, "RIFF", 4) != 0 || memcmp(buf + 8, "WAVE", 4) != 0) {
+        return false;
+    }
+
+    uint32_t sample_rate = 0;
+    uint16_t channels = 0, bits_per_sample = 0;
+    bool have_fmt = false;
+    size_t pos = 12;
+
+    // Walk RIFF sub-chunks looking for "fmt " (need it first, to validate
+    // the format) and "data" (the actual PCM payload). Chunks are
+    // word-aligned, so odd-sized chunks get a trailing pad byte.
+    while (pos + 8 <= len) {
+        uint32_t chunk_size = get_le32(buf + pos + 4);
+        size_t data_pos = pos + 8;
+
+        if (memcmp(buf + pos, "fmt ", 4) == 0 && data_pos + 16 <= len) {
+            channels = get_le16(buf + data_pos + 2);
+            sample_rate = get_le32(buf + data_pos + 4);
+            bits_per_sample = get_le16(buf + data_pos + 14);
+            have_fmt = true;
+        } else if (memcmp(buf + pos, "data", 4) == 0) {
+            if (!have_fmt || channels != 1 || bits_per_sample != 16 || data_pos > len) {
+                return false;
+            }
+            size_t avail = len - data_pos;
+            size_t data_len = chunk_size < avail ? chunk_size : avail;
+            *out_pcm = (const int16_t *)(buf + data_pos);
+            *out_num_samples = data_len / sizeof(int16_t);
+            *out_sample_rate = sample_rate;
+            return true;
+        }
+
+        pos = data_pos + chunk_size + (chunk_size & 1);
+    }
+    return false;
+}

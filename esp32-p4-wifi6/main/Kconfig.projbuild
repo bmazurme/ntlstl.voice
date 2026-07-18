@@ -58,9 +58,50 @@ menu "P4 Voice Client Configuration"
         int "I2S DIN (mic data from ES8311 ASDOUT) GPIO"
         default 11
 
+    config P4_I2S_DOUT_GPIO
+        int "I2S DOUT (speaker data to ES8311 DSDIN) GPIO, -1 to disable playback"
+        default 9
+        help
+            GPIO driving the ES8311's DSDIN (speaker/DAC data in) pin, used
+            to play the TTS response through the onboard speaker. Not in
+            Waveshare's public specs; derived from the schematic of the
+            ESP32-P4-WIFI6-Touch-LCD-XC variant, which reuses the same
+            ESP32-P4-WIFI6-M core module (its MCLK/SCLK/LRCK/ASDOUT net
+            labels there - GPIO13/12/10/11 - match this project's
+            already-verified-working pin assignments exactly, which is why
+            9 is trusted here too). Not verified on real hardware yet -
+            if speaker output stays silent or misbehaves, double check
+            against your own board's schematic. Set to -1 to disable
+            playback entirely (falls back to pre-speaker-support behavior).
+
+    config P4_PA_ENABLE_GPIO
+        int "Speaker amplifier (NS4150B) enable GPIO, -1 if always-on"
+        default 53
+        help
+            Drives the NS4150B amplifier's CTRL pin (through series
+            resistor R105 per the schematic referenced above). Same
+            provenance/confidence caveat as P4_I2S_DOUT_GPIO - not yet
+            confirmed on real hardware. If the speaker stays silent even
+            though DSDIN/DOUT looks right, try -1 first (some board
+            revisions tie CTRL permanently high instead).
+
+    config P4_SPEAKER_VOLUME
+        int "Speaker output volume (0-100)"
+        range 0 100
+        default 70
+
     config P4_MIC_GAIN_DB
         int "Microphone input gain (dB)"
         range 0 50
-        default 30
+        default 40
+        help
+            Analog PGA gain on the ES8311's mic input. Raised from the
+            board's nominal 30 dB default: logged peak amplitudes during
+            normal speech topped out around 1200 (of a possible 32767) at
+            30 dB, leaving WakeNet a weak signal to work with at
+            conversational volume/distance. Push higher (up to 50) if wake
+            word detection is still missed from across the room; back off
+            if quiet-room false wakeups become a problem or the signal
+            clips (peaks pinned at 32767).
 
 endmenu
