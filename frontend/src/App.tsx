@@ -1,7 +1,37 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Spin,
+  Text,
+  TextArea,
+} from '@gravity-ui/uikit';
 import { useRecorder } from './useRecorder.ts';
-import { transcribeAudio, getLlmCommand, executeHaCommand } from './api.ts';
-import type { HaCommand, HaExecuteResult } from './types.ts';
+import {
+  apiErrorMessage,
+  useHaExecuteMutation,
+  useLlmCommandMutation,
+  useTranscribeMutation,
+} from './store/api.ts';
+import { useAppDispatch, useAppSelector } from './store/hooks.ts';
+import {
+  commanded,
+  executed,
+  reset,
+  setAutoMode,
+  setBusy,
+  setCommandText,
+  setCountdown,
+  setError,
+  setTranscript,
+  startRecording,
+  tickCountdown,
+  transcribed,
+} from './store/slice.ts';
+import type { StepMeta } from './store/slice.ts';
+import type { HaCommand } from './types.ts';
 import { errorMessage } from './utils.ts';
 import './App.css';
 
@@ -11,63 +41,69 @@ import './App.css';
 // trigger, then a fixed-length recording) so behavior stays comparable.
 const RECORD_SECONDS = 4;
 
-type Stage = 'idle' | 'transcribed' | 'commanded' | 'executed';
-type Busy = 'transcribing' | 'thinking' | 'executing' | null;
-type StepMeta = { model: string; duration_ms: number } | null;
-
 function MetaLine({ meta }: { meta: StepMeta }) {
   if (!meta) return null;
   return (
-    <p className="meta">
+    <Text color="secondary" variant="caption-2" className="meta">
       Модель: <code>{meta.model}</code> · {meta.duration_ms} мс
-    </p>
+    </Text>
   );
 }
 
 function App() {
   const { isRecording, start, stop } = useRecorder();
-  const [stage, setStage] = useState<Stage>('idle');
-  const [busy, setBusy] = useState<Busy>(null);
-  const [transcript, setTranscript] = useState('');
-  const [transcribeMeta, setTranscribeMeta] = useState<StepMeta>(null);
-  const [commandText, setCommandText] = useState('');
-  const [llmMeta, setLlmMeta] = useState<StepMeta>(null);
-  const [haResult, setHaResult] = useState<HaExecuteResult | null>(null);
-  const [error, setError] = useState('');
-  const [autoMode, setAutoMode] = useState(false);
-  const [countdown, setCountdown] = useState<number | null>(null);
+  const dispatch = useAppDispatch();
+  const {
+    stage,
+    busy,
+    transcript,
+    transcribeMeta,
+    commandText,
+    llmMeta,
+    haResult,
+    error,
+    autoMode,
+    countdown,
+  } = useAppSelector((s) => s.pipeline);
+
+  const [transcribeAudio] = useTranscribeMutation();
+  const [getLlmCommand] = useLlmCommandMutation();
+  const [executeHaCommand] = useHaExecuteMutation();
+
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function runLLMStep(text: string) {
-    setError('');
-    setBusy('thinking');
+    dispatch(setError(''));
+    dispatch(setBusy('thinking'));
     try {
-      const { command, model, duration_ms } = await getLlmCommand(text);
-      setCommandText(JSON.stringify(command, null, 2));
-      setLlmMeta({ model, duration_ms });
-      setStage('commanded');
+      const { command, model, duration_ms } = await getLlmCommand(text).unwrap();
+      dispatch(
+        commanded({
+          commandText: JSON.stringify(command, null, 2),
+          meta: { model, duration_ms },
+        }),
+      );
       if (autoMode) {
         await runHAStep(command);
       }
     } catch (err) {
-      setError(errorMessage(err));
+      dispatch(setError(apiErrorMessage(err, 'LLM command request failed')));
     } finally {
-      setBusy(null);
+      dispatch(setBusy(null));
     }
   }
 
   async function runHAStep(command: HaCommand) {
-    setError('');
-    setBusy('executing');
+    dispatch(setError(''));
+    dispatch(setBusy('executing'));
     try {
-      const result = await executeHaCommand(command);
-      setHaResult(result);
-      setStage('executed');
+      const result = await executeHaCommand(command).unwrap();
+      dispatch(executed(result));
     } catch (err) {
-      setError(errorMessage(err));
+      dispatch(setError(apiErrorMessage(err, 'Home Assistant request failed')));
     } finally {
-      setBusy(null);
+      dispatch(setBusy(null));
     }
   }
 
@@ -80,50 +116,40 @@ function App() {
 
   async function stopAndTranscribe() {
     clearRecordingTimers();
-    setCountdown(null);
-    setBusy('transcribing');
+    dispatch(setCountdown(null));
+    dispatch(setBusy('transcribing'));
     const blob = await stop();
     try {
       if (!blob) {
         throw new Error('Recording produced no audio data');
       }
-      const { text, model, duration_ms } = await transcribeAudio(blob);
-      setTranscript(text);
-      setTranscribeMeta({ model, duration_ms });
-      setCommandText('');
-      setLlmMeta(null);
-      setHaResult(null);
-      setStage('transcribed');
+      const { text, model, duration_ms } = await transcribeAudio(blob).unwrap();
+      dispatch(transcribed({ text, meta: { model, duration_ms } }));
       if (autoMode) {
         await runLLMStep(text);
       }
     } catch (err) {
-      setError(errorMessage(err));
+      dispatch(setError(apiErrorMessage(err, errorMessage(err))));
     } finally {
-      setBusy(null);
+      dispatch(setBusy(null));
     }
   }
 
   async function handleRecordClick() {
-    setError('');
+    dispatch(setError(''));
     if (isRecording) {
       await stopAndTranscribe();
     } else {
-      setTranscript('');
-      setTranscribeMeta(null);
-      setCommandText('');
-      setLlmMeta(null);
-      setHaResult(null);
-      setStage('idle');
+      dispatch(startRecording());
       try {
         await start();
-        setCountdown(RECORD_SECONDS);
+        dispatch(setCountdown(RECORD_SECONDS));
         countdownIntervalRef.current = setInterval(() => {
-          setCountdown((c) => (c !== null ? c - 1 : null));
+          dispatch(tickCountdown());
         }, 1000);
         autoStopTimerRef.current = setTimeout(stopAndTranscribe, RECORD_SECONDS * 1000);
       } catch (err) {
-        setError('Не удалось получить доступ к микрофону: ' + errorMessage(err));
+        dispatch(setError('Не удалось получить доступ к микрофону: ' + errorMessage(err)));
       }
     }
   }
@@ -137,112 +163,138 @@ function App() {
     try {
       command = JSON.parse(commandText);
     } catch {
-      setError('Команда не является валидным JSON — исправьте перед отправкой');
+      dispatch(setError('Команда не является валидным JSON — исправьте перед отправкой'));
       return;
     }
     await runHAStep(command);
   }
 
   function handleReset() {
-    setStage('idle');
-    setBusy(null);
-    setTranscript('');
-    setTranscribeMeta(null);
-    setCommandText('');
-    setLlmMeta(null);
-    setHaResult(null);
-    setError('');
+    clearRecordingTimers();
+    dispatch(reset());
   }
 
   return (
     <div className="app">
-      <h1>ESP32 → STT → LLM → HA</h1>
-      <p className="subtitle">Пошаговая отладка: запись → транскрипт → команда (JSON) → Home Assistant</p>
+      <Text as="h1" variant="display-2" className="title">
+        ESP32 → STT → LLM → HA
+      </Text>
+      <Text as="p" color="secondary" className="subtitle">
+        Пошаговая отладка: запись → транскрипт → команда (JSON) → Home Assistant
+      </Text>
 
-      <label className="auto-toggle">
-        <input
-          type="checkbox"
-          checked={autoMode}
-          onChange={(e) => setAutoMode(e.target.checked)}
-        />
+      <Checkbox
+        size="l"
+        checked={autoMode}
+        onUpdate={(checked) => dispatch(setAutoMode(checked))}
+        className="auto-toggle"
+      >
         Выполнять всю цепочку автоматически (без подтверждений)
-      </label>
+      </Checkbox>
 
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <Alert theme="danger" message={error} className="alert" />
+      )}
 
-      <section className="panel">
-        <h2>1. Запись и распознавание (Whisper.cpp)</h2>
-        <button
-          type="button"
-          className={`record-btn ${isRecording ? 'recording' : ''}`}
+      <Card view="outlined" className="panel">
+        <Text as="h2" variant="subheader-2">
+          1. Запись и распознавание (Whisper.cpp)
+        </Text>
+        <Button
+          size="xl"
+          view={isRecording ? 'outlined-danger' : 'action'}
+          pin="circle-circle"
           onClick={handleRecordClick}
+          loading={busy === 'transcribing'}
           disabled={busy !== null}
+          className="record-btn"
         >
           {isRecording ? '⏹ Остановить' : '🎤 Записать'}
-        </button>
-        <p className="status">
+        </Button>
+        <Text as="p" color="secondary" className="status">
           {isRecording && countdown !== null && `Идёт запись… остановится через ${countdown}с`}
           {busy === 'transcribing' && 'Распознаю речь…'}
-        </p>
-        <textarea
-          className="transcript"
+        </Text>
+        <TextArea
           value={transcript}
-          onChange={(e) => setTranscript(e.target.value)}
+          onUpdate={(value) => dispatch(setTranscript(value))}
           placeholder="Здесь появится распознанный текст..."
           rows={3}
         />
         <MetaLine meta={transcribeMeta} />
-        <button
-          type="button"
+        <Button
+          view="normal"
           onClick={handleConfirmToLLM}
           disabled={!transcript.trim() || busy !== null || autoMode}
         >
           Подтвердить и отправить в LLM →
-        </button>
-      </section>
+        </Button>
+      </Card>
 
-      <section className={`panel ${stage === 'idle' ? 'panel-disabled' : ''}`}>
-        <h2>2. Команда от LLM (JSON)</h2>
-        <p className="status">{busy === 'thinking' && 'LLM формирует команду…'}</p>
-        <textarea
-          className="transcript command-json"
+      <Card
+        view="outlined"
+        className={`panel ${stage === 'idle' ? 'panel-disabled' : ''}`}
+      >
+        <Text as="h2" variant="subheader-2">
+          2. Команда от LLM (JSON)
+        </Text>
+        <Text as="p" color="secondary" className="status">
+          {busy === 'thinking' && (
+            <>
+              <Spin size="xs" /> LLM формирует команду…
+            </>
+          )}
+        </Text>
+        <TextArea
           value={commandText}
-          onChange={(e) => setCommandText(e.target.value)}
+          onUpdate={(value) => dispatch(setCommandText(value))}
           placeholder='{"action": "...", "entity": "...", "value": null, "response_text": "..."}'
           rows={7}
           disabled={stage === 'idle'}
+          className="command-json"
         />
         <MetaLine meta={llmMeta} />
-        <button
-          type="button"
+        <Button
+          view="normal"
           onClick={handleConfirmToHA}
           disabled={stage === 'idle' || !commandText.trim() || busy !== null || autoMode}
         >
           Подтвердить и выполнить в Home Assistant →
-        </button>
-      </section>
+        </Button>
+      </Card>
 
-      <section className={`panel ${stage !== 'executed' && busy !== 'executing' ? 'panel-disabled' : ''}`}>
-        <h2>3. Выполнение в Home Assistant</h2>
-        <p className="status">{busy === 'executing' && 'Home Assistant выполняет команду…'}</p>
+      <Card
+        view="outlined"
+        className={`panel ${stage !== 'executed' && busy !== 'executing' ? 'panel-disabled' : ''}`}
+      >
+        <Text as="h2" variant="subheader-2">
+          3. Выполнение в Home Assistant
+        </Text>
+        <Text as="p" color="secondary" className="status">
+          {busy === 'executing' && (
+            <>
+              <Spin size="xs" /> Home Assistant выполняет команду…
+            </>
+          )}
+        </Text>
         <div className="reply">
           {haResult ? (
             <>
               <div>{haResult.response_text || '(нет голосового ответа)'}</div>
-              <div className="ha-meta">
+              <Text color="secondary" variant="caption-2" className="ha-meta">
                 executed: {String(haResult.executed)} · {haResult.duration_ms} мс
-              </div>
+              </Text>
             </>
           ) : (
             '—'
           )}
         </div>
         {stage === 'executed' && (
-          <button type="button" onClick={handleReset}>
+          <Button view="normal" onClick={handleReset}>
             Начать заново
-          </button>
+          </Button>
         )}
-      </section>
+      </Card>
     </div>
   );
 }
