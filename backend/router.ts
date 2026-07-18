@@ -11,6 +11,8 @@ import {
   HA_URL,
   OLLAMA_MODEL,
   OLLAMA_URL,
+  PIPER_BIN,
+  PIPER_MODEL,
   SYSTEM_PROMPT_PATH,
   WHISPER_BIN,
   WHISPER_LANGUAGE,
@@ -170,6 +172,47 @@ router.post('/api/llm-command', async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+router.post('/api/tts', async (req: Request, res: Response) => {
+  const { text } = req.body as { text?: string };
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: 'No text provided' });
+  }
+
+  const workDir = await mkdtemp(path.join(tmpdir(), 'tts-'));
+  const wavPath = path.join(workDir, 'out.wav');
+
+  try {
+    // Piper reads the text to synthesize from stdin and writes a WAV file
+    // (sample rate is whatever the voice model was trained at, e.g. 22050Hz
+    // for the *-medium voices - the ESP32 client reads it from the WAV
+    // header rather than assuming a fixed rate).
+    await new Promise<void>((resolve, reject) => {
+      const proc = execFile(
+        PIPER_BIN,
+        ['-m', PIPER_MODEL, '-f', wavPath],
+        { maxBuffer: 1024 * 1024 * 10 },
+        (error, _stdout, stderr) => {
+          if (error) {
+            reject(new Error(`piper failed: ${error.message}\n${stderr}`));
+            return;
+          }
+          resolve();
+        },
+      );
+      proc.stdin?.end(text);
+    });
+
+    const wav = await readFile(wavPath);
+    res.setHeader('Content-Type', 'audio/wav');
+    res.send(wav);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: errorMessage(err) });
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
   }
 });
 

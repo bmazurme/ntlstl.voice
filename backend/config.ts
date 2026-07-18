@@ -7,6 +7,9 @@ export const WHISPER_MODEL = process.env.WHISPER_MODEL || './models/ggml-small.b
 export const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 export const WHISPER_LANGUAGE = process.env.WHISPER_LANGUAGE || 'auto';
 
+export const PIPER_BIN = process.env.PIPER_BIN || 'piper';
+export const PIPER_MODEL = process.env.PIPER_MODEL || './models/ru_RU-irina-medium.onnx';
+
 export const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
 
